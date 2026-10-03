@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nginx vs FastAPI</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2;
+    --panel: #fcfcfb;
+    --border: #e2e1dc;
+    --text: #0b0b0b;
+    --muted: #6b6a66;
+    --err: #c93a39;
+    /* one fixed color per server */
+    --nginx: #2a78d6;
+    --fastapi: #eb6834;
+    --nginx-tuned: #1baf7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #111110; --panel: #1a1a19; --border: #2e2e2c;
+      --text: #ffffff; --muted: #a3a29a; --err: #e66767;
+      --nginx: #3987e5; --fastapi: #d95926; --nginx-tuned: #199e70;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111110; --panel: #1a1a19; --border: #2e2e2c;
+    --text: #ffffff; --muted: #a3a29a; --err: #e66767;
+    --nginx: #3987e5; --fastapi: #d95926; --nginx-tuned: #199e70;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 24px; margin: 0; }
+  .meta { color: var(--muted); margin: 2px 0 16px; }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .tile { flex: 1 1 220px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .tile small { display: block; color: var(--muted); }
+  .tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+
+  .wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th { font-weight: 600; white-space: nowrap; }
+  tbody th { font-weight: 500; white-space: nowrap; }
+  td { min-width: 170px; }
+  td small { color: var(--muted); }
+  tr:last-child th, tr:last-child td { border-bottom: 0; }
+  tr.sum th, tr.sum td { color: var(--muted); }
+
+  .bar { height: 6px; border-radius: 0 3px 3px 0; margin-bottom: 4px; min-width: 2px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+  .s-nginx { background: var(--nginx); }
+  .s-fastapi { background: var(--fastapi); }
+  .s-nginx-tuned { background: var(--nginx-tuned); }
+  .err { color: var(--err); font-weight: 600; }
+
+  footer { color: var(--muted); font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>nginx vs FastAPI</h1>
+  <p class="meta">2026-10-03 15:59 · 1 CPU per server · 64 connections · 10s per URL · CPU near 100% = server was the bottleneck</p>
+  <div class="tiles"><div class="tile"><small>FastAPI, index.html</small><b>5,983 req/s</b><small>≈ 517 million requests a day</small></div><div class="tile"><small>nginx vs FastAPI, index.html</small><b>17.1× faster</b><small>102,261 vs 5,983 req/s</small></div></div>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>URL</th><th><i class="dot s-nginx"></i>nginx</th><th><i class="dot s-fastapi"></i>fastapi</th><th><i class="dot s-nginx-tuned"></i>nginx-tuned</th></tr></thead>
+      <tbody><tr><th>index.html</th><td><div class="bar s-nginx" style="width:59.6%"></div><b>102,261</b> req/s<br><small>p99 0.73 ms · 0.5 KB</small></td><td><div class="bar s-fastapi" style="width:3.5%"></div><b>5,983</b> req/s<br><small>p99 12.14 ms · 0.5 KB</small></td><td><div class="bar s-nginx-tuned" style="width:100.0%"></div><b>171,721</b> req/s<br><small>p99 0.43 ms · 0.3 KB</small></td></tr><tr><th>SPA deep link</th><td><div class="bar s-nginx" style="width:63.5%"></div><b>107,701</b> req/s<br><small>p99 0.84 ms · 0.5 KB</small></td><td><div class="bar s-fastapi" style="width:2.9%"></div><b>4,992</b> req/s<br><small>p99 14.73 ms · 0.5 KB</small></td><td><div class="bar s-nginx-tuned" style="width:100.0%"></div><b>169,487</b> req/s<br><small>p99 0.43 ms · 0.3 KB</small></td></tr><tr><th>vendor.js 220 KB</th><td><div class="bar s-nginx" style="width:64.3%"></div><b>56,646</b> req/s<br><small>p99 1.88 ms · 216.5 KB</small></td><td><div class="bar s-fastapi" style="width:3.7%"></div><b>3,290</b> req/s<br><small>p99 24.84 ms · 216.5 KB</small></td><td><div class="bar s-nginx-tuned" style="width:100.0%"></div><b>88,133</b> req/s<br><small>p99 0.80 ms · 67.1 KB</small></td></tr><tr><th>hero.webp 215 KB</th><td><div class="bar s-nginx" style="width:89.3%"></div><b>58,237</b> req/s<br><small>p99 1.53 ms · 211.6 KB</small></td><td><div class="bar s-fastapi" style="width:5.1%"></div><b>3,326</b> req/s<br><small>p99 21.98 ms · 211.6 KB</small></td><td><div class="bar s-nginx-tuned" style="width:100.0%"></div><b>65,184</b> req/s<br><small>p99 1.81 ms · 211.6 KB</small></td></tr><tr class='sum'><th>memory</th><td>4.6 MiB</td><td>93.2 MiB</td><td>4.6 MiB</td></tr><tr class='sum'><th>CPU used</th><td>100%</td><td>100%</td><td>100%</td></tr></tbody>
+    </table>
+  </div>
+  <footer>Bars: requests per second, relative to the fastest server on that URL. p99: 99% of requests were faster. KB: size sent per response.</footer>
+</main>
+</body>
+</html>
