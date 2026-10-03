@@ -1,17 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import hero from './assets/hero.webp'
 
-// Mock numbers, only for the design.
-const SCENARIOS = {
-  index: { label: 'index.html', nginx: { rps: 97400, p99: 1.9, cpu: 10 }, fastapi: { rps: 11800, p99: 14.2, cpu: 84 } },
-  js_700k: { label: 'vendor.js 220 KB', nginx: { rps: 8900, p99: 18.4, cpu: 112 }, fastapi: { rps: 2100, p99: 61.0, cpu: 470 } },
-  missing: { label: 'SPA fallback', nginx: { rps: 91200, p99: 2.1, cpu: 11 }, fastapi: { rps: 10300, p99: 15.8, cpu: 96 } },
-}
-
-const METRICS = [
-  { key: 'rps', label: 'Requests / s', unit: '', better: 'high' },
-  { key: 'p99', label: 'p99 latency', unit: ' ms', better: 'low' },
-  { key: 'cpu', label: 'CPU per request', unit: ' µs', better: 'low' },
+const SERVERS = [
+  { key: 'nginx', label: 'nginx', port: 8080, text: 'nginx 1.29 with sendfile and an SPA fallback (try_files).' },
+  { key: 'fastapi', label: 'FastAPI', port: 8081, text: 'One line of Python: app.frontend("/", directory=...) on uvicorn.' },
+  { key: 'nginx-tuned', label: 'nginx-tuned', port: 8082, text: 'nginx plus open_file_cache and precompressed .gz files.' },
 ]
 
 function NginxLogo({ size = 64 }) {
@@ -32,19 +25,21 @@ function FastApiLogo({ size = 64 }) {
   )
 }
 
-const fmt = (n) => n.toLocaleString('en-US')
-
-function Bar({ value, max, color }) {
-  return (
-    <div className="bar">
-      <div className="bar-fill" style={{ width: `${(value / max) * 100}%`, background: color }} />
-    </div>
-  )
+// Which server sent this page: "nginx/1.29.8" or "uvicorn" (FastAPI)
+function useServer() {
+  const [server, setServer] = useState(null)
+  useEffect(() => {
+    fetch('/', { method: 'HEAD', cache: 'no-store' })
+      .then((r) => setServer(r.headers.get('server') || 'unknown'))
+      .catch(() => setServer('unknown'))
+  }, [])
+  return server
 }
 
 export default function App() {
-  const [scenario, setScenario] = useState('index')
-  const data = SCENARIOS[scenario]
+  const server = useServer()
+  const [selected, setSelected] = useState(SERVERS[0])
+  const [clicks, setClicks] = useState(0)
 
   return (
     <main>
@@ -61,47 +56,33 @@ export default function App() {
           </div>
         </div>
         <h1>Who serves your SPA faster?</h1>
-        <p className="sub">Static file serving benchmark · 1 CPU · 64 keep-alive connections · mock data</p>
+        <p className="sub">This page was served by <b>{server ?? '…'}</b></p>
       </header>
 
       <nav className="tabs">
-        {Object.entries(SCENARIOS).map(([key, s]) => (
-          <button key={key} className={key === scenario ? 'active' : ''} onClick={() => setScenario(key)}>
+        {SERVERS.map((s) => (
+          <button key={s.key} className={s.key === selected.key ? 'active' : ''} onClick={() => setSelected(s)}>
             {s.label}
           </button>
         ))}
       </nav>
 
-      <section className="cards">
-        {METRICS.map((m) => {
-          const a = data.nginx[m.key]
-          const b = data.fastapi[m.key]
-          const max = Math.max(a, b)
-          const nginxWins = m.better === 'high' ? a >= b : a <= b
-          const ratio = (Math.max(a, b) / Math.min(a, b)).toFixed(1)
-          return (
-            <article key={m.key} className="card">
-              <h2>{m.label}</h2>
-              <div className="row">
-                <NginxLogo size={22} />
-                <Bar value={a} max={max} color="var(--nginx)" />
-                <b>{fmt(a)}{m.unit}</b>
-              </div>
-              <div className="row">
-                <FastApiLogo size={22} />
-                <Bar value={b} max={max} color="var(--fastapi)" />
-                <b>{fmt(b)}{m.unit}</b>
-              </div>
-              <p className="verdict">
-                {nginxWins ? 'nginx' : 'FastAPI'} wins by <strong>{ratio}×</strong>
-              </p>
-            </article>
-          )
-        })}
+      <section className="card">
+        <div className="card-head">
+          {selected.key === 'fastapi' ? <FastApiLogo size={40} /> : <NginxLogo size={40} />}
+          <h2>{selected.label}</h2>
+        </div>
+        <p>{selected.text}</p>
+        <a className="open" href={`http://localhost:${selected.port}`}>Open on :{selected.port} →</a>
+      </section>
+
+      <section className="card counter">
+        <p>A bit of React state, to prove the JS bundle loaded:</p>
+        <button onClick={() => setClicks((c) => c + 1)}>Clicked {clicks} times</button>
       </section>
 
       <footer>
-        Numbers are placeholders, not real benchmark results.
+        Real numbers: run <code>make bench</code> and open the HTML report.
       </footer>
     </main>
   )
