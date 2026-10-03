@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Simple nginx vs FastAPI static serving benchmark -> results/<time>/report.html
 
 For each server and URL: oha runs a short warm-up, then a measured run with
@@ -13,7 +12,6 @@ import argparse
 import json
 import subprocess
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
