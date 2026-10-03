@@ -1,33 +1,32 @@
-"""Simple nginx vs FastAPI static serving benchmark -> results/<time>/report.html
+"""nginx vs FastAPI benchmark -> results/<time>/report.html
 
-For each server and URL: oha runs a short warm-up, then a measured run with
-N keep-alive connections. While it runs, `docker stats` samples the server's
-CPU and memory. Only one server is under load at a time.
+Start the servers first (`make up`), then: python3 bench/bench.py
 
-    python3 bench/bench.py                    # all servers, 10s per URL
-    python3 bench/bench.py --duration 5 --servers nginx fastapi
+For each server and URL, oha (in Docker, on its own CPU cores) does a short
+warm-up and then a measured run. CPU and memory come from the server
+container's cgroup. One server is under load at a time.
 """
 
-import argparse
 import json
 import subprocess
-import threading
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = Path(__file__).resolve().parent / "report_template.html"
-OHA = "ghcr.io/hatoo/oha:latest"
-NETWORK = "bench"  # from docker-compose.yml
-SERVERS = ["nginx", "fastapi", "nginx-tuned"]
+DURATION = 10       # measured seconds per URL
+WARMUP = 2          # seconds, results ignored
+CONNECTIONS = 64
+LOADGEN_CPUS = "1-4"  # servers are pinned to core 0 in docker-compose.yml
 
-# accept: what a browser sends. text/html makes /any/deep/link a page
-# navigation, so FastAPI answers with the index.html fallback like nginx does.
-SCENARIOS = [
-    {"key": "index", "label": "index.html", "path": "/", "accept": "text/html"},
-    {"key": "deep_link", "label": "SPA deep link", "path": "/any/deep/link", "accept": "text/html"},
-    {"key": "vendor_js", "label": "vendor.js (220 KB)", "path": "/assets/vendor.js", "accept": "*/*"},
-    {"key": "hero_webp", "label": "hero.webp (215 KB)", "path": "/assets/hero.webp", "accept": "image/webp"},
+HERE = Path(__file__).resolve().parent
+OHA = "ghcr.io/hatoo/oha:latest"
+SERVERS = ["nginx", "fastapi", "nginx-tuned"]
+URLS = [
+    # text/html = browser page navigation, so FastAPI serves the SPA fallback like nginx
+    ("index.html", "/", "text/html"),
+    ("SPA deep link", "/any/deep/link", "text/html"),
+    ("vendor.js 220 KB", "/assets/vendor.js", "*/*"),
+    ("hero.webp 215 KB", "/assets/hero.webp", "image/webp"),
 ]
 
 
@@ -35,124 +34,100 @@ def sh(*cmd: str) -> str:
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
 
-def container_id(server: str) -> str:
-    cid = sh("docker", "compose", "ps", "-q", server).strip()
-    if not cid:
-        raise SystemExit(f"{server} is not running, start it with `make up`")
-    return cid
-
-
-def oha(url: str, accept: str, seconds: int, connections: int, cpuset: str) -> dict:
-    out = sh(
-        "docker", "run", "--rm", "--network", NETWORK, "--cpuset-cpus", cpuset, OHA,
-        "--no-tui", "--output-format", "json", "-z", f"{seconds}s", "-c", str(connections),
+def oha(url: str, accept: str, seconds: int) -> dict:
+    return json.loads(sh(
+        "docker", "run", "--rm", "--network", "bench", "--cpuset-cpus", LOADGEN_CPUS, OHA,
+        "--no-tui", "--output-format", "json", "-z", f"{seconds}s", "-c", str(CONNECTIONS),
         "-H", f"Accept: {accept}", "-H", "Accept-Encoding: gzip, deflate, br", url,
-    )
-    return json.loads(out)
+    ))
 
 
-class StatsSampler(threading.Thread):
-    """Samples `docker stats` (CPU %, memory) of one container until stopped."""
-
-    def __init__(self, cid: str):
-        super().__init__(daemon=True)
-        self.cid, self.cpu, self.mem = cid, [], []
-        self.stop = threading.Event()
-
-    def run(self) -> None:
-        while not self.stop.is_set():
-            line = sh("docker", "stats", "--no-stream", "--format", "{{json .}}", self.cid)
-            s = json.loads(line)
-            self.cpu.append(float(s["CPUPerc"].rstrip("%")))
-            self.mem.append(parse_mib(s["MemUsage"].split("/")[0].strip()))
+def cgroup(cid: str) -> tuple[int, int]:
+    """Server container's total CPU time (µs) and current memory (bytes)."""
+    out = sh("docker", "exec", cid, "sh", "-c",
+             "grep usage_usec /sys/fs/cgroup/cpu.stat; cat /sys/fs/cgroup/memory.current")
+    cpu_line, mem = out.split("\n")[:2]
+    return int(cpu_line.split()[1]), int(mem)
 
 
-def parse_mib(v: str) -> float:
-    for unit, mul in (("GiB", 1024), ("MiB", 1), ("KiB", 1 / 1024), ("B", 1 / 1024 / 1024)):
-        if v.endswith(unit):
-            return float(v[: -len(unit)]) * mul
-    return 0.0
+def measure(server: str, cid: str, path: str, accept: str) -> dict:
+    url = f"http://{server}{path}"
+    oha(url, accept, WARMUP)
+    cpu_before, _ = cgroup(cid)
+    r = oha(url, accept, DURATION)
+    cpu_after, mem = cgroup(cid)
 
-
-def run_one(server: str, cid: str, sc: dict, args) -> dict:
-    url = f"http://{server}{sc['path']}"
-    oha(url, sc["accept"], args.warmup, args.connections, args.loadgen_cpus)  # warm-up, ignored
-    sampler = StatsSampler(cid)
-    sampler.start()
-    r = oha(url, sc["accept"], args.duration, args.connections, args.loadgen_cpus)
-    sampler.stop.set()
-    sampler.join()
-
-    codes = {int(k): v for k, v in r["statusCodeDistribution"].items()}
-    # requests still in flight when the timer ends are cut by oha, not real errors
+    bad_status = sum(v for k, v in r["statusCodeDistribution"].items() if int(k) >= 400)
+    # requests cut off by the end of the run are not errors
     conn_errors = sum(v for k, v in r["errorDistribution"].items() if "deadline" not in k)
-    lat = r["latencyPercentiles"]
-    cpu = sampler.cpu[1:] or sampler.cpu  # first sample overlaps the start
     return {
-        "server": server,
-        "scenario": sc["key"],
         "rps": r["summary"]["requestsPerSec"],
-        "p50_ms": lat["p50"] * 1000,
-        "p99_ms": lat["p99"] * 1000,
-        "bytes_per_response": r["summary"]["sizePerRequest"] or 0,
-        "errors": sum(v for k, v in codes.items() if k >= 400) + conn_errors,
-        "status_codes": codes,
-        "cpu_percent": sum(cpu) / len(cpu) if cpu else 0,
-        "mem_mib": max(sampler.mem) if sampler.mem else 0,
+        "p99_ms": r["latencyPercentiles"]["p99"] * 1000,
+        "bytes": r["summary"]["sizePerRequest"] or 0,
+        "errors": bad_status + conn_errors,
+        # % of one CPU core used during the run
+        "cpu": (cpu_after - cpu_before) / (r["summary"]["total"] * 1e6) * 100,
+        "mem_mib": mem / 1024**2,
     }
 
 
-def write_report(payload: dict, out_dir: Path) -> Path:
-    html = TEMPLATE.read_text().replace("__DATA__", json.dumps(payload))
-    path = out_dir / "report.html"
-    path.write_text(html)
-    return path
+def report(results: dict, started: datetime) -> str:
+    servers = [s for s in SERVERS if s in results]
+
+    def cell(server: str, label: str) -> str:
+        r = results[server][label]
+        top = max(results[s][label]["rps"] for s in servers)
+        err = f' <span class="err">{r["errors"]:,} errors</span>' if r["errors"] else ""
+        return (f'<td><div class="bar s-{server}" style="width:{r["rps"] / top * 100:.1f}%"></div>'
+                f'<b>{r["rps"]:,.0f}</b> req/s{err}<br><small>p99 {r["p99_ms"]:.2f} ms · {r["bytes"] / 1024:.1f} KB</small></td>')
+
+    def summary_row(name: str, fn) -> str:
+        return f"<tr class='sum'><th>{name}</th>" + "".join(f"<td>{fn(results[s])}</td>" for s in servers) + "</tr>"
+
+    head = "".join(f'<th><i class="dot s-{s}"></i>{escape(s)}</th>' for s in servers)
+    rows = "".join(f"<tr><th>{escape(label)}</th>" + "".join(cell(s, label) for s in servers) + "</tr>"
+                   for label, _, _ in URLS)
+    rows += summary_row("memory", lambda r: f"{max(x['mem_mib'] for x in r.values()):.1f} MiB")
+    rows += summary_row("CPU used", lambda r: f"{sum(x['cpu'] for x in r.values()) / len(r):.0f}%")
+
+    tiles = ""
+    if {"nginx", "fastapi"} <= set(servers):
+        n, f = results["nginx"]["index.html"]["rps"], results["fastapi"]["index.html"]["rps"]
+        tiles = (f'<div class="tile"><small>FastAPI, index.html</small><b>{f:,.0f} req/s</b>'
+                 f'<small>≈ {f * 86400 / 1e6:,.0f} million requests a day</small></div>'
+                 f'<div class="tile"><small>nginx vs FastAPI, index.html</small><b>{n / f:.1f}× faster</b>'
+                 f'<small>{n:,.0f} vs {f:,.0f} req/s</small></div>')
+
+    meta = (f"{started:%Y-%m-%d %H:%M} · 1 CPU per server · {CONNECTIONS} connections · "
+            f"{DURATION}s per URL · CPU near 100% = server was the bottleneck")
+    return ((HERE / "report_template.html").read_text()
+            .replace("{{meta}}", meta).replace("{{tiles}}", tiles)
+            .replace("{{head}}", head).replace("{{rows}}", rows))
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--servers", nargs="+", default=SERVERS, choices=SERVERS)
-    p.add_argument("--duration", type=int, default=10, help="measured seconds per URL (default 10)")
-    p.add_argument("--warmup", type=int, default=2, help="warm-up seconds per URL (default 2)")
-    p.add_argument("--connections", type=int, default=64, help="concurrent connections (default 64)")
-    p.add_argument("--loadgen-cpus", default="1-4", help="cores for oha, not the servers' core 0 (default 1-4)")
-    p.add_argument("--report-only", type=Path, metavar="DIR", help="rebuild report.html from DIR/results.json")
-    args = p.parse_args()
-
-    if args.report_only:
-        payload = json.loads((args.report_only / "results.json").read_text())
-        print(write_report(payload, args.report_only))
-        return
-
-    print("Pulling oha …")
     sh("docker", "pull", "-q", OHA)
     started = datetime.now()
-    results = []
-    for server in args.servers:
-        cid = container_id(server)
-        for sc in SCENARIOS:
-            print(f"  {server:12s} {sc['label']:22s}", end=" ", flush=True)
-            res = run_one(server, cid, sc, args)
-            results.append(res)
-            print(f"{res['rps']:>10,.0f} req/s   p99 {res['p99_ms']:6.2f} ms   "
-                  f"cpu {res['cpu_percent']:5.0f}%   mem {res['mem_mib']:5.1f} MiB   errors {res['errors']}")
+    results = {}
+    for server in SERVERS:
+        cid = sh("docker", "compose", "ps", "-q", server).strip()
+        if not cid:
+            print(f"{server} is not running, skipped (start it with `make up`)")
+            continue
+        results[server] = {}
+        for label, path, accept in URLS:
+            print(f"{server:12s} {label:18s}", end=" ", flush=True)
+            r = results[server][label] = measure(server, cid, path, accept)
+            print(f"{r['rps']:>9,.0f} req/s  p99 {r['p99_ms']:6.2f} ms  "
+                  f"cpu {r['cpu']:4.0f}%  mem {r['mem_mib']:5.1f} MiB  errors {r['errors']}")
 
-    payload = {
-        "started": started.isoformat(timespec="seconds"),
-        "config": {
-            "duration_s": args.duration,
-            "warmup_s": args.warmup,
-            "connections": args.connections,
-            "server_cpus": int(sh("docker", "inspect", "-f", "{{.HostConfig.NanoCpus}}", container_id(args.servers[0])).strip()) / 1e9,
-        },
-        "servers": args.servers,
-        "scenarios": SCENARIOS,
-        "results": results,
-    }
-    out_dir = ROOT / "results" / started.strftime("%Y%m%d-%H%M%S")
-    out_dir.mkdir(parents=True)
-    (out_dir / "results.json").write_text(json.dumps(payload, indent=2))
-    print(f"\nReport: {write_report(payload, out_dir)}")
+    if not results:
+        raise SystemExit("no servers running, start them with `make up`")
+    out = HERE.parent / "results" / f"{started:%Y%m%d-%H%M%S}"
+    out.mkdir(parents=True)
+    (out / "results.json").write_text(json.dumps(results, indent=2))
+    (out / "report.html").write_text(report(results, started))
+    print(f"\nReport: {out / 'report.html'}")
 
 
 if __name__ == "__main__":
