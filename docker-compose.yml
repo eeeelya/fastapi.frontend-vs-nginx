@@ -1,0 +1,41 @@
+# Every server gets the SAME cpuset, CPU quota and memory limit
+x-server-limits: &limits
+  cpuset: "${SERVER_CPUSET:-0}"
+  cpus: "${SERVER_CPUS:-1}"
+  mem_limit: 512m
+  networks: [bench]
+
+services:
+  nginx:
+    <<: *limits
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+      args:
+        EXTRA: extra-none
+    ports: 
+      - "8080:80"
+
+  nginx-tuned:
+    <<: *limits
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+      args:
+        EXTRA: extra-tuned
+    ports: 
+      - "8082:80"
+
+  fastapi:
+    <<: *limits
+    build:
+      context: .
+      dockerfile: fastapi-app/Dockerfile
+    environment:
+      WORKERS: "${SERVER_CPUS:-1}"
+    ports: 
+      - "8081:80"
+
+networks:
+  bench:
+    name: bench

@@ -1,0 +1,16 @@
+[project]
+name = "fastapi-app"
+version = "0.1.0"
+description = "FastAPI app.frontend() server for the nginx vs FastAPI benchmark"
+readme = "README.md"
+authors = [
+    { name = "Ilya Goroshchik", email = "goooroshchik@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.uv]
+package = false

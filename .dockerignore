@@ -1,0 +1,5 @@
+results/
+frontend/node_modules
+fastapi-app/.venv
+frontend/dist
+fastapi-app/__pycache__
