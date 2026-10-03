@@ -42,10 +42,6 @@ npm run dev    # http://localhost:5173
 
 `make bench` runs [oha](https://github.com/hatoo/oha) in Docker against each
 server, one at a time: 2s warm-up + 10s measured per URL, 64 connections.
-It measures req/s, p50/p99 latency, CPU and peak memory, and writes
-`results/<time>/report.html`. `make bench-quick` does 3s per URL.
-
-```bash
-python3 bench/bench.py --servers nginx fastapi --duration 5
-python3 bench/bench.py --report-only results/<time>   # rebuild the report
-```
+It measures req/s, p99 latency, CPU and peak memory, and writes
+`results/<time>/report.html`. Settings are constants at the top of
+`bench/bench.py`.

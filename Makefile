@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up down build rebuild logs ps nginx nginx-tuned fastapi check bench bench-quick \
+.PHONY: help up down build rebuild logs ps nginx nginx-tuned fastapi check bench \
         install dev build-frontend fastapi-dev clean
 
 URLS := / /any/deep/link /favicon.svg /assets/index.css /assets/index.js /assets/vendor.js /assets/hero.webp
