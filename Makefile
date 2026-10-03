@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up down build rebuild logs ps nginx nginx-tuned fastapi check \
+.PHONY: help up down build rebuild logs ps nginx nginx-tuned fastapi check bench bench-quick \
         install dev build-frontend fastapi-dev clean
 
 URLS := / /any/deep/link /favicon.svg /assets/index.css /assets/index.js /assets/vendor.js /assets/hero.webp
@@ -44,3 +44,6 @@ check: ## Request every benchmark URL on every server (000 = server down)
 				-w "  %{http_code}  %{size_download}B  $$url\n" "http://localhost:$$port$$url" || true; \
 		done; \
 	done
+
+bench: up
+	python3 bench/bench.py

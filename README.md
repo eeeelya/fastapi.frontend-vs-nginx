@@ -7,6 +7,7 @@ The same React SPA served by nginx and by FastAPI `app.frontend()`.
 | [`frontend/`](frontend/README.md) | React + Vite page (mock nginx vs FastAPI comparison) |
 | [`nginx/`](nginx/README.md) | nginx image, plain and tuned variants |
 | [`fastapi-app/`](fastapi-app/README.md) | FastAPI app (Python 3.14, uv) |
+| `bench/` | benchmark script + HTML report template |
 
 Each image builds `frontend/` itself, no local build needed.
 
@@ -15,6 +16,7 @@ Each image builds `frontend/` itself, no local build needed.
 ```bash
 make up       # docker compose up -d --build
 make check    # hit every benchmark URL on all three servers
+make bench    # benchmark -> results/<time>/report.html
 make down
 make          # list all commands
 ```
@@ -34,4 +36,16 @@ All three get the same CPU and memory limits (`SERVER_CPUS`, default 1;
 cd frontend
 npm install
 npm run dev    # http://localhost:5173
+```
+
+## Benchmark
+
+`make bench` runs [oha](https://github.com/hatoo/oha) in Docker against each
+server, one at a time: 2s warm-up + 10s measured per URL, 64 connections.
+It measures req/s, p50/p99 latency, CPU and peak memory, and writes
+`results/<time>/report.html`. `make bench-quick` does 3s per URL.
+
+```bash
+python3 bench/bench.py --servers nginx fastapi --duration 5
+python3 bench/bench.py --report-only results/<time>   # rebuild the report
 ```
